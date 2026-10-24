@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>拾序 · 文件整理</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#23312e;font:15px system-ui,-apple-system,"Microsoft YaHei",sans-serif}main{max-width:1000px;margin:60px auto;padding:32px;background:white;border:1px solid #dce4df;border-radius:20px}h1{font-size:32px;margin:0 0 10px}p{color:#65736e;line-height:1.7}.bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:24px 0}button,select{font:inherit;padding:11px 18px;border:1px solid #cdd9d2;border-radius:9px;background:#fff}button{cursor:pointer}button.primary{background:#246c54;color:#fff;border-color:#246c54}button:disabled{opacity:.45;cursor:default}#folder{padding:16px;background:#edf4ef;border-radius:9px;overflow-wrap:anywhere}#status{white-space:pre-wrap;line-height:1.7;margin:18px 0}section{max-height:430px;overflow:auto;border:1px solid #e3e8e5;border-radius:10px}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:13px 16px;border-bottom:1px solid #edf0ee;overflow-wrap:anywhere}th{background:#f5f8f6;position:sticky;top:0}small{color:#64736b}footer{margin-top:22px;color:#64736b;font-size:13px;line-height:1.8}
+</style>
+<link rel="stylesheet" href="style.css">
+<main>
+<header><div class="brand"><span class="app-icon">拾</span><div><strong>拾序</strong><small>让文件，各归其位。</small></div></div><span class="local-badge">● 本地处理 · 无需上传</span></header>
+<div class="hero"><small>YOUR SPACE, IN ORDER</small><h1>整理，从清晰开始。</h1><p>选择一个文件夹，预览每一处变化，再安心整理。</p></div>
+<div class="workspace"><aside class="glass"><div class="step">01 / 选择来源</div><div id="folder">尚未选择文件夹</div><button id="choose" class="primary">选择文件夹</button><div class="step">02 / 整理方式</div><label for="scheme">整理方案</label><select id="scheme"><option value="general">通用文件整理</option><option value="video">视频项目整理</option></select><p id="schemeInfo"></p><label class="cleanup-option"><input id="cleanup" type="checkbox"><span>整理后删除空文件夹<small>包括空分类目录；撤销可恢复目录。</small></span></label><button id="preview" disabled>重新扫描</button><div class="aside-note">包含所有子文件夹<br>同名自动改名 · 支持撤销</div></aside>
+<div class="content"><div class="preview-head"><div><small>03 / 核对变化</small><h2>整理预览</h2></div><span class="preview-pill">预览不会移动文件</span></div>
+<div class="metrics"><div><strong id="count">0</strong><span>待移动文件</span></div><div><strong id="volume">0 B</strong><span>文件总大小</span></div><div><strong id="renameCount">0</strong><span>同名需改名</span></div></div>
+<p id="cleanupHint">空文件夹将保留。</p><div id="status" role="status" aria-live="polite">选择文件夹后，自动扫描并展示整理结果。</div>
+<div class="preview-layout"><nav id="categories" aria-label="分类筛选"></nav><div class="file-panel"><div class="searchbar"><label for="search">⌕</label><input id="search" type="search" placeholder="搜索文件名、原位置或目标位置" aria-label="搜索预览"><label class="duplicate-filter"><input id="duplicatesOnly" type="checkbox">只看重名</label><span id="resultCount">0 个文件</span></div><div class="list-heading"><span>文件 / 原位置</span><span>整理后的位置</span></div><div id="rows"></div><div class="pagination"><button id="prevPage">上一页</button><span id="pageInfo">第 1 / 1 页</span><button id="nextPage">下一页</button></div></div></div>
+<div class="actionbar glass"><div><strong>核对完成后，一键归位。</strong><small>先复制校验，再移除原文件。</small></div><div class="actions"><button id="undo" disabled>撤销整理</button><button id="run" class="primary" disabled>执行整理</button></div></div></div></div>
+<footer>支持 Windows / macOS 的 Chrome、Edge。关闭页面将清除一键撤销记录，整理日志仍保存在所选文件夹中。</footer></main><dialog id="conflictDialog" aria-labelledby="conflictTitle"><div class="conflict-head"><div><h2 id="conflictTitle">重名文件对比</h2><p>重名不代表内容相同。整理时保留两份文件，自动添加序号。</p></div><button id="closeConflict" aria-label="关闭对比">关闭</button></div><p id="conflictTarget"></p><div id="conflictFiles"></div></dialog>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let root=null,plan=[],history=[],busy=false,foldersToCreate=[],selectedCategory='all',page=1,previewReady=false;
+const PAGE_SIZE=60;
+const groups={图片类型:"jpg jpeg png gif webp bmp svg heic heif tif tiff avif raw ico psd dng cr2 nef arw",视频类型:"mp4 mov avi mkv webm m4v wmv flv mpg mpeg ts mts m2ts 3gp ogv vob rm rmvb",音频类型:"mp3 wav flac aac m4a ogg aiff aif wma opus amr ape mid midi",文本类型:"pdf doc docx txt md rtf odt pages xls xlsx csv tsv ods numbers ppt pptx odp key js ts jsx tsx py html htm css json xml yaml yml java c cpp h go rs sh sql log ini toml conf srt ass vtt"};
+const schemes={
+ general:{name:'通用文件整理',folders:['视频类型','音频类型','文本类型','图片类型','未知类型'],protected:[],description:'递归扫描全部子文件夹，按扩展名分为视频、音频、文本、图片、未知五类。仅为有文件需要归入的类型创建文件夹。'},
+ video:{name:'视频项目整理',folders:['01.image','02.video','03.audio','04.subtitle','05.readme','06.output','07.Timeline','未知类型'],protected:['06.output','07.Timeline'],description:'图片 → 01.image；视频 → 02.video；音频 → 03.audio；字幕 → 04.subtitle；文档与说明、名称含 readme（不区分大小写）→ 05.readme；剪辑工程 → 07.Timeline；其他 → 未知类型。06.output 和 07.Timeline 内已有文件保持原位（含子目录）。执行时创建缺少的目录；未知类型仅在有文件需要归入时创建。'}
+};
+function activeScheme(){return schemes[$('scheme').value];}
+function category(name){const ext=name.includes('.')?name.split('.').pop().toLowerCase():'';const kind=Object.keys(groups).find(k=>groups[k].split(' ').includes(ext))||'未知类型';if($('scheme').value!=='video')return kind;if(name.toLowerCase().includes('readme'))return '05.readme';if('srt ass ssa vtt sub sbv lrc'.split(' ').includes(ext))return '04.subtitle';if('prproj drp drt dra fcpxml fcp fcpbundle aep veg mlt kdenlive otio'.split(' ').includes(ext))return '07.Timeline';return {'图片类型':'01.image','视频类型':'02.video','音频类型':'03.audio','文本类型':'05.readme','未知类型':'未知类型'}[kind];}
+function describeScheme(){ $('schemeInfo').textContent=activeScheme().description; }
+$('scheme').onchange=()=>{previewReady=false;plan=[];foldersToCreate=[];render();describeScheme();status('方案已切换，请重新生成预览。');};
+function controls(){ $('choose').disabled=busy;$('scheme').disabled=busy;$('cleanup').disabled=busy;$('preview').disabled=busy||!root;$('run').disabled=busy||(!plan.length&&!foldersToCreate.length&&!($('cleanup').checked&&root&&previewReady));$('undo').disabled=busy||!history.length; }
+function status(s){$('status').textContent=s;}
+function element(tag,className,text){const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e;}
+function sizeLabel(bytes){if(!bytes)return '0 B';const units=['B','KB','MB','GB','TB'];const n=Math.min(Math.floor(Math.log(bytes)/Math.log(1024)),4);return (bytes/1024**n).toFixed(n?1:0)+' '+units[n];}
+function filteredPlan(){const q=$('search').value.trim().toLowerCase();return plan.filter(p=>(!$('duplicatesOnly').checked||p.target!==p.name)&&(selectedCategory==='all'||p.parts[0]===selectedCategory)&&(!q||p.sourceParts.concat(p.name).join('/').toLowerCase().includes(q)||p.parts.concat(p.target).join('/').toLowerCase().includes(q)));}
+function render(){
+ $('count').textContent=plan.length;$('volume').textContent=sizeLabel(plan.reduce((n,p)=>n+p.size,0));$('renameCount').textContent=plan.filter(p=>p.target!==p.name).length;
+ if(selectedCategory!=='all'&&!activeScheme().folders.includes(selectedCategory))selectedCategory='all';
+ $('categories').replaceChildren();
+ for(const name of ['all',...activeScheme().folders]){
+ const items=name==='all'?plan:plan.filter(p=>p.parts[0]===name);const btn=element('button','category'+(selectedCategory===name?' selected':''));btn.setAttribute('aria-pressed',String(selectedCategory===name));
+ btn.append(element('span','folder-symbol',name==='all'?'▦':'▱'),element('span','category-name',name==='all'?'全部文件':name),element('span','category-count',items.length));
+ if(foldersToCreate.includes(name))btn.title='执行时创建此文件夹';
+ btn.onclick=()=>{selectedCategory=name;page=1;render();};$('categories').append(btn);
+ }
+ const filtered=filteredPlan(),pages=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));page=Math.max(1,Math.min(page,pages));$('resultCount').textContent=filtered.length+' 个文件';$('pageInfo').textContent='第 '+page+' / '+pages+' 页';$('prevPage').disabled=page===1;$('nextPage').disabled=page===pages;
+ $('rows').replaceChildren();
+ if(!filtered.length){const empty=element('div','empty');empty.append(element('div','empty-icon','▱'),element('strong','',plan.length?'没有匹配的待移动文件':root?'当前没有待移动文件':'你的文件，即将井井有条'),element('p','',plan.length?'试试其他分类或搜索词。':root?'已归类文件保持原位；新建目录信息见上方。':'选择左侧文件夹，查看分类概览和移动明细。'));$('rows').append(empty);}
+ for(const p of filtered.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE)){
+ const row=element('div','file-row'),source=element('div','file-source'),info=element('div','file-info'),dest=element('div','file-dest');
+ const ext=p.name.includes('.')?p.name.split('.').pop().slice(0,5).toUpperCase():'FILE';source.append(element('span','file-icon',ext));
+ info.append(element('strong','filename',p.name),element('span','filepath','原位置：'+(root?root.name+'/':'')+p.sourceParts.join('/')+(p.sourceParts.length?'/':'')),element('small','filesize',sizeLabel(p.size)));source.append(info);
+ dest.append(element('span','move-arrow','→'),element('span','destination-folder',p.parts.join('/')+'/'),element('strong','filename',p.target));
+ if(p.target!==p.name){dest.append(element('span','rename-badge','同名自动改名'));const view=element('button','view-conflict','查看重名');view.onclick=()=>showConflict(p);dest.append(view);}
+ row.append(source,dest);$('rows').append(row);
+ }
+ controls();
+}
+$('duplicatesOnly').onchange=()=>{page=1;render();};
+$('search').oninput=()=>{page=1;render();};$('prevPage').onclick=()=>{page--;render();};$('nextPage').onclick=()=>{page++;render();};
+$('cleanup').onchange=()=>{controls();$('cleanupHint').textContent=$('cleanup').checked?'执行整理后将递归删除空子文件夹（含空分类目录），保留所选根目录。撤销可恢复已删除的目录。':'空文件夹将保留。';};
+async function removeEmptyDirectories(dir,parts,records,logHandle){
+ const children=[];for await(const [name,h] of dir.entries())if(h.kind==='directory')children.push([name,h]);
+ let removed=0;
+ for(const [name,child] of children){
+  const childParts=parts.concat(name);removed+=await removeEmptyDirectories(child,childParts,records,logHandle);
+  let empty=true;for await(const entry of child.entries()){empty=false;break;}
+  if(!empty)continue;
+  const record={operation:'removeEmptyDirectory',path:childParts.join('/'),state:'pending'};records.push(record);await saveLog(logHandle,records);
+  try{await dir.removeEntry(name);}catch(e){if(e.name==='InvalidModificationError'||e.name==='NotFoundError'){record.state='skipped';await saveLog(logHandle,records);continue;}throw e;}
+  history.push({kind:'emptyDirectory',sourceParts:childParts,record,logHandle,records});record.state='removed';removed++;await saveLog(logHandle,records);
+ }return removed;
+}
+let conflictUrls=[],conflictVersion=0;
+function clearConflict(){conflictVersion++;for(const url of conflictUrls)URL.revokeObjectURL(url);conflictUrls=[];$('conflictFiles').replaceChildren();}
+$('closeConflict').onclick=()=>$('conflictDialog').close();$('conflictDialog').onclose=clearConflict;
+async function addConflictFile(title,path,handle,version){
+ if(version!==conflictVersion)return;
+ const card=element('article','conflict-card');card.append(element('span','conflict-label',title),element('strong','filename',path));$('conflictFiles').append(card);
+ try{
+  const file=await handle.getFile();if(version!==conflictVersion)return;
+  card.append(element('p','',sizeLabel(file.size)+' · 修改时间 '+new Date(file.lastModified).toLocaleString()));
+  const ext=file.name.split('.').pop().toLowerCase();let media;
+  if('jpg jpeg png gif webp bmp svg avif'.split(' ').includes(ext))media=element('img','media-preview');
+  else if('mp4 mov webm m4v ogv'.split(' ').includes(ext)){media=element('video','media-preview');media.controls=true;media.preload='metadata';}
+  else if('mp3 wav flac aac m4a ogg opus'.split(' ').includes(ext)){media=element('audio','media-preview');media.controls=true;media.preload='metadata';}
+  if(media){const url=URL.createObjectURL(file);conflictUrls.push(url);media.src=url;if(ext==='svg'||media.tagName==='IMG')media.alt=file.name;media.onerror=()=>{media.replaceWith(element('p','','此格式无法在浏览器内预览，请根据路径在电脑中查看。'));};card.append(media);}
+  else if('txt md csv tsv json log srt ass vtt ini yaml yml'.split(' ').includes(ext)){const text=await file.slice(0,20000).text();if(version!==conflictVersion)return;card.append(element('pre','text-preview',text+(file.size>20000?'\n…仅显示前 20 KB':'')));}
+  else card.append(element('p','','此格式暂不支持内容预览，请根据路径在电脑中查看。'));
+ }catch(e){if(version===conflictVersion)card.append(element('p','','读取失败：'+e.message));}
+}
+async function showConflict(p){
+ clearConflict();const version=conflictVersion;$('conflictTarget').textContent='整理后：'+p.parts.concat(p.target).join(' / ');$('conflictDialog').showModal();
+ await addConflictFile('当前待整理文件',p.sourceParts.concat(p.name).join(' / '),await p.sourceDir.getFileHandle(p.name).catch(()=>({getFile:async()=>{throw Error('原文件已不存在，请重新扫描');}})),version);
+ try{const dir=await directory(p.parts);const h=await dir.getFileHandle(p.name);await addConflictFile('目标目录已有同名文件',p.parts.concat(p.name).join(' / '),h,version);}catch(e){if(!['NotFoundError','TypeMismatchError'].includes(e.name)&&version===conflictVersion)$('conflictFiles').append(element('p','','无法读取目标同名文件：'+e.message));if(e.name==='TypeMismatchError'&&version===conflictVersion)$('conflictFiles').append(element('p','','目标位置存在同名文件夹：'+p.parts.concat(p.name).join('/')));}
+ for(const other of plan){if(version!==conflictVersion)return;if(other!==p&&other.parts[0]===p.parts[0]&&other.name.toLowerCase()===p.name.toLowerCase()){
+  try{await addConflictFile('本次整理中的其他同名文件',other.sourceParts.concat(other.name).join(' / '),await other.sourceDir.getFileHandle(other.name),version);}catch(e){if(version===conflictVersion)$('conflictFiles').append(element('p','','读取同名文件失败：'+e.message));}
+ }}
+}
+async function exists(dir,name){try{await dir.getFileHandle(name);return true;}catch(e){if(e.name==='TypeMismatchError')return true;if(e.name==='NotFoundError')return false;throw e;}}
+async function directory(parts,create=false){let d=root;for(const p of parts)d=await d.getDirectoryHandle(p,{create});return d;}
+async function freeName(dir,name,reserved=new Set()){const dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';let n=name,i=1;while(reserved.has(n.toLowerCase())||(dir&&await exists(dir,n)))n=`${stem} (${i++})${ext}`;reserved.add(n.toLowerCase());return n;}
+async function digest(file){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await file.arrayBuffer()))).join(',');}
+async function transfer(from,name,to,target,expected){const handle=await from.getFileHandle(name),file=await handle.getFile();if(expected&&(file.size!==expected.size||file.lastModified!==expected.modified))throw Error('文件已变化，请重新预览：'+name);if(await exists(to,target))throw Error('目标已存在，请重新预览：'+target);const output=await to.getFileHandle(target,{create:true});try{const writer=await output.createWritable();try{await writer.write(file);await writer.close();}catch(e){await writer.abort().catch(()=>{});throw e;}const copy=await output.getFile();if(copy.size!==file.size||await digest(copy)!==await digest(file))throw Error('副本校验失败：'+name);const current=await handle.getFile();if(current.size!==file.size||current.lastModified!==file.lastModified)throw Error('源文件在整理期间发生变化：'+name);await from.removeEntry(name);}catch(e){throw Error(e.message+'。原文件已保留；目标位置可能有副本，请检查。');}}
+async function saveLog(logHandle,records){const w=await logHandle.createWritable();await w.write(JSON.stringify({tool:'拾序',time:new Date().toISOString(),records},null,2));await w.close();}
+$('choose').onclick=async()=>{
+ if(!window.showDirectoryPicker){status('当前浏览器不支持文件夹读写。请把 index.html 拖入 Chrome 或 Edge 后重试。');return;}
+ busy=true;controls();status('等待选择文件夹和读写授权…');
+ try{
+  const selected=await showDirectoryPicker({mode:'readwrite'});
+  if(history.length&&!confirm('切换文件夹将清除当前的一键撤销记录，是否继续？')){status('已保留原文件夹及撤销记录。');return;}
+  root=selected;previewReady=false;plan=[];history=[];foldersToCreate=[];selectedCategory='all';page=1;$('search').value='';
+  $('folder').textContent='已选择：'+root.name;render();
+  await generatePreview();
+ }catch(e){
+  if(e.name==='AbortError')status('文件夹选择或授权已取消，没有移动文件。若选中后仍出现此提示，请在 Chrome 或 Edge 中打开本工具再试。');
+  else if(e.name==='NotAllowedError'||e.name==='SecurityError')status('浏览器未允许访问该文件夹：'+e.message+'\n请在 Chrome 或 Edge 中重新选择文件夹，并允许读写访问。');
+  else status('无法选择文件夹：'+e.message);
+ }finally{busy=false;controls();}
+};
+async function scanDirectory(dir,sourceParts=[],stats={total:0,already:0,logs:0,protected:0},reservations=new Map()){
+for await(const [name,handle] of dir.entries()){
+if(handle.kind==='directory'){if(sourceParts.length===0&&activeScheme().protected.includes(name)){stats.protected++;continue;}await scanDirectory(handle,sourceParts.concat(name),stats,reservations);continue;}
+if(handle.kind!=='file')continue;
+if(sourceParts.length===0&&/^拾序日志-.*\.json$/i.test(name)){stats.logs++;continue;}
+stats.total++;if(stats.total===1||stats.total%50===0){status('正在扫描：'+sourceParts.concat(name).join(' / ')+'\n已识别 '+stats.total+' 个文件…');await new Promise(resolve=>setTimeout(resolve,0));}const parts=[category(name)];
+if(sourceParts.length===1&&sourceParts[0]===parts[0]){stats.already++;continue;}
+const f=await handle.getFile();let targetDir=null;
+try{targetDir=await directory(parts);}catch(e){if(e.name!=='NotFoundError')throw e;}
+const key=parts[0];if(!reservations.has(key))reservations.set(key,new Set());
+const target=await freeName(targetDir,name,reservations.get(key));
+plan.push({name,target,parts,sourceParts:[...sourceParts],sourceDir:dir,size:f.size,modified:f.lastModified});
+}return stats;
+}
+async function generatePreview(){previewReady=false;busy=true;plan=[];foldersToCreate=[];controls();status('正在递归扫描所有文件夹…');try{const stats=await scanDirectory(root);for(const folder of activeScheme().folders){if(($('scheme').value==='general'||folder==='未知类型')&&!plan.some(p=>p.parts[0]===folder))continue;try{await directory([folder]);}catch(e){if(e.name!=='NotFoundError')throw e;foldersToCreate.push(folder);}}status(`扫描到 ${stats.total} 个文件，${plan.length} 个待整理，${stats.already} 个已在正确分类中，跳过 ${stats.logs} 个根目录整理日志。方案：${activeScheme().name}。将创建 ${foldersToCreate.length} 个目录${foldersToCreate.length?'（'+foldersToCreate.join('、')+'）':''}。保留 ${stats.protected} 个输出或工程目录。`);previewReady=true;}catch(e){plan=[];foldersToCreate=[];status('扫描失败：'+e.message+'\n请检查文件夹访问权限；可重新选择文件夹再试。');}finally{busy=false;render();}}
+$('preview').onclick=generatePreview;
+$('run').onclick=async()=>{if(!confirm(`按“${activeScheme().name}”移动 ${plan.length} 个文件，创建 ${foldersToCreate.length} 个目录。${$('cleanup').checked?'整理后将删除所有空子文件夹（含空分类目录）。':''}请勿在整理过程中修改这些文件。继续？`))return;busy=true;controls();let records=[],logHandle;try{const logName=await freeName(root,'拾序日志-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json');logHandle=await root.getFileHandle(logName,{create:true});await saveLog(logHandle,records);for(const folder of foldersToCreate)await directory([folder],true);for(const p of plan){status(`正在整理：${p.name}`);const dir=await directory(p.parts,true);const record={original:p.sourceParts.concat(p.name).join('/'),destination:p.parts.concat(p.target).join('/'),state:'pending'};records.push(record);await saveLog(logHandle,records);await transfer(p.sourceDir,p.name,dir,p.target,p);history.push({dir,name:p.target,original:p.name,sourceParts:p.sourceParts,record,logHandle,records});record.state='moved';await saveLog(logHandle,records);}const removed=$('cleanup').checked?await removeEmptyDirectories(root,[],records,logHandle):0;status(`整理完成，共移动 ${plan.length} 个文件，删除 ${removed} 个空文件夹。可点击撤销恢复文件及已删除的目录。`);}catch(e){status('整理已停止：'+e.message+'\n已完成的文件可撤销。请参照整理日志检查当前文件。');}finally{previewReady=false;plan=[];foldersToCreate=[];busy=false;render();}};
+$('undo').onclick=async()=>{busy=true;controls();try{while(history.length){const h=history[history.length-1];if(h.kind==='emptyDirectory'){status('正在恢复目录：'+h.sourceParts.join('/'));await directory(h.sourceParts,true);history.pop();h.record.state='restored';await saveLog(h.logHandle,h.records);continue;}status('正在恢复：'+h.original);const sourceDir=await directory(h.sourceParts,true);await transfer(h.dir,h.name,sourceDir,h.original);history.pop();h.record.state='restored';await saveLog(h.logHandle,h.records);}status('已恢复本次页面中整理的文件。空分类文件夹和日志已保留。');}catch(e){status('撤销已停止：'+e.message+'\n不会覆盖原位置的同名文件。');}finally{plan=[];busy=false;render();}};
+window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
+describeScheme();render();
+if(!window.showDirectoryPicker)status('当前浏览器不支持文件夹读写，请使用 Chrome 或 Edge 打开。');
+</script></html>
