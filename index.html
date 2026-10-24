@@ -9,17 +9,18 @@
 <main>
 <header><div class="brand"><span class="app-icon">拾</span><div><strong>拾序</strong><small>让文件，各归其位。</small></div></div><span class="local-badge">● 本地处理 · 无需上传</span></header>
 <div class="hero"><small>YOUR SPACE, IN ORDER</small><h1>整理，从清晰开始。</h1><p>选择一个文件夹，预览每一处变化，再安心整理。</p></div>
-<div class="workspace"><aside class="glass"><div class="step">01 / 选择来源</div><div id="folder">尚未选择文件夹</div><button id="choose" class="primary">选择文件夹</button><div class="step">02 / 整理方式</div><label for="scheme">整理方案</label><select id="scheme"><option value="general">通用文件整理</option><option value="video">视频项目整理</option></select><p id="schemeInfo"></p><label class="cleanup-option"><input id="cleanup" type="checkbox"><span>整理后删除空文件夹<small>包括空分类目录；撤销可恢复目录。</small></span></label><button id="preview" disabled>重新扫描</button><div class="aside-note">包含所有子文件夹<br>同名自动改名 · 支持撤销</div></aside>
+<div id="dropZone" class="drop-zone"><strong>拖入文件或文件夹</strong><span data-drop-hint>拖入文件或文件夹 · 不会上传文件</span><button type="button" hidden>授权并添加</button></div><div class="workspace"><aside class="glass"><div class="step">01 / 选择来源</div><div id="folder">尚未选择文件夹</div><button id="choose" class="primary">选择文件夹</button><div class="step">02 / 整理方式</div><label for="scheme">整理方案</label><select id="scheme"><option value="general">通用文件整理</option><option value="video">视频项目整理</option></select><p id="schemeInfo"></p><label class="cleanup-option"><input id="cleanup" type="checkbox"><span>整理后删除空文件夹<small>包括空分类目录；撤销可恢复目录。</small></span></label><button id="preview" disabled>重新扫描</button><div class="aside-note">包含所有子文件夹<br>同名自动改名 · 支持撤销</div></aside>
 <div class="content"><div class="preview-head"><div><small>03 / 核对变化</small><h2>整理预览</h2></div><span class="preview-pill">预览不会移动文件</span></div>
 <div class="metrics"><div><strong id="count">0</strong><span>待移动文件</span></div><div><strong id="volume">0 B</strong><span>文件总大小</span></div><div><strong id="renameCount">0</strong><span>同名需改名</span></div></div>
 <p id="cleanupHint">空文件夹将保留。</p><div id="status" role="status" aria-live="polite">选择文件夹后，自动扫描并展示整理结果。</div>
 <div class="preview-layout"><nav id="categories" aria-label="分类筛选"></nav><div class="file-panel"><div class="searchbar"><label for="search">⌕</label><input id="search" type="search" placeholder="搜索文件名、原位置或目标位置" aria-label="搜索预览"><label class="duplicate-filter"><input id="duplicatesOnly" type="checkbox">只看重名</label><span id="resultCount">0 个文件</span></div><div class="list-heading"><span>文件 / 原位置</span><span>整理后的位置</span></div><div id="rows"></div><div class="pagination"><button id="prevPage">上一页</button><span id="pageInfo">第 1 / 1 页</span><button id="nextPage">下一页</button></div></div></div>
 <div class="actionbar glass"><div><strong>核对完成后，一键归位。</strong><small>先复制校验，再移除原文件。</small></div><div class="actions"><button id="undo" disabled>撤销整理</button><button id="run" class="primary" disabled>执行整理</button></div></div></div></div>
 <footer>支持 Windows / macOS 的 Chrome、Edge。关闭页面将清除一键撤销记录，整理日志仍保存在所选文件夹中。</footer></main><dialog id="conflictDialog" aria-labelledby="conflictTitle"><div class="conflict-head"><div><h2 id="conflictTitle">重名文件对比</h2><p>重名不代表内容相同。整理时保留两份文件，自动添加序号。</p></div><button id="closeConflict" aria-label="关闭对比">关闭</button></div><p id="conflictTarget"></p><div id="conflictFiles"></div></dialog>
+<script src="drop-input.js"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let root=null,plan=[],history=[],busy=false,foldersToCreate=[],selectedCategory='all',page=1,previewReady=false;
+let root=null,plan=[],history=[],busy=false,foldersToCreate=[],selectedCategory='all',page=1,previewReady=false,dropScope=null;
 const PAGE_SIZE=60;
 const groups={图片类型:"jpg jpeg png gif webp bmp svg heic heif tif tiff avif raw ico psd dng cr2 nef arw",视频类型:"mp4 mov avi mkv webm m4v wmv flv mpg mpeg ts mts m2ts 3gp ogv vob rm rmvb",音频类型:"mp3 wav flac aac m4a ogg aiff aif wma opus amr ape mid midi",文本类型:"pdf doc docx txt md rtf odt pages xls xlsx csv tsv ods numbers ppt pptx odp key js ts jsx tsx py html htm css json xml yaml yml java c cpp h go rs sh sql log ini toml conf srt ass vtt"};
 const schemes={
@@ -30,7 +31,7 @@ function activeScheme(){return schemes[$('scheme').value];}
 function category(name){const ext=name.includes('.')?name.split('.').pop().toLowerCase():'';const kind=Object.keys(groups).find(k=>groups[k].split(' ').includes(ext))||'未知类型';if($('scheme').value!=='video')return kind;if(name.toLowerCase().includes('readme'))return '05.readme';if('srt ass ssa vtt sub sbv lrc'.split(' ').includes(ext))return '04.subtitle';if('prproj drp drt dra fcpxml fcp fcpbundle aep veg mlt kdenlive otio'.split(' ').includes(ext))return '07.Timeline';return {'图片类型':'01.image','视频类型':'02.video','音频类型':'03.audio','文本类型':'05.readme','未知类型':'未知类型'}[kind];}
 function describeScheme(){ $('schemeInfo').textContent=activeScheme().description; }
 $('scheme').onchange=()=>{previewReady=false;plan=[];foldersToCreate=[];render();describeScheme();status('方案已切换，请重新生成预览。');};
-function controls(){ $('choose').disabled=busy;$('scheme').disabled=busy;$('cleanup').disabled=busy;$('preview').disabled=busy||!root;$('run').disabled=busy||(!plan.length&&!foldersToCreate.length&&!($('cleanup').checked&&root&&previewReady));$('undo').disabled=busy||!history.length; }
+function controls(){ $('choose').disabled=busy;$('scheme').disabled=busy;$('cleanup').disabled=busy||!!dropScope;$('preview').disabled=busy||!root;$('run').disabled=busy||(!plan.length&&!foldersToCreate.length&&!($('cleanup').checked&&root&&previewReady));$('undo').disabled=busy||!history.length; }
 function status(s){$('status').textContent=s;}
 function element(tag,className,text){const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e;}
 function sizeLabel(bytes){if(!bytes)return '0 B';const units=['B','KB','MB','GB','TB'];const n=Math.min(Math.floor(Math.log(bytes)/Math.log(1024)),4);return (bytes/1024**n).toFixed(n?1:0)+' '+units[n];}
@@ -111,7 +112,7 @@ $('choose').onclick=async()=>{
  try{
   const selected=await showDirectoryPicker({mode:'readwrite'});
   if(history.length&&!confirm('切换文件夹将清除当前的一键撤销记录，是否继续？')){status('已保留原文件夹及撤销记录。');return;}
-  root=selected;previewReady=false;plan=[];history=[];foldersToCreate=[];selectedCategory='all';page=1;$('search').value='';
+  root=selected;dropScope=null;previewReady=false;plan=[];history=[];foldersToCreate=[];selectedCategory='all';page=1;$('search').value='';
   $('folder').textContent='已选择：'+root.name;render();
   await generatePreview();
  }catch(e){
@@ -124,6 +125,7 @@ async function scanDirectory(dir,sourceParts=[],stats={total:0,already:0,logs:0,
 for await(const [name,handle] of dir.entries()){
 if(handle.kind==='directory'){if(sourceParts.length===0&&activeScheme().protected.includes(name)){stats.protected++;continue;}await scanDirectory(handle,sourceParts.concat(name),stats,reservations);continue;}
 if(handle.kind!=='file')continue;
+const candidate=sourceParts.concat(name);if(dropScope&&!dropScope.some(path=>path.every((part,i)=>candidate[i]===part)))continue;
 if(sourceParts.length===0&&/^拾序日志-.*\.json$/i.test(name)){stats.logs++;continue;}
 stats.total++;if(stats.total===1||stats.total%50===0){status('正在扫描：'+sourceParts.concat(name).join(' / ')+'\n已识别 '+stats.total+' 个文件…');await new Promise(resolve=>setTimeout(resolve,0));}const parts=[category(name)];
 if(sourceParts.length===1&&sourceParts[0]===parts[0]){stats.already++;continue;}
@@ -139,6 +141,12 @@ $('preview').onclick=generatePreview;
 $('run').onclick=async()=>{if(!confirm(`按“${activeScheme().name}”移动 ${plan.length} 个文件，创建 ${foldersToCreate.length} 个目录。${$('cleanup').checked?'整理后将删除所有空子文件夹（含空分类目录）。':''}请勿在整理过程中修改这些文件。继续？`))return;busy=true;controls();let records=[],logHandle;try{const logName=await freeName(root,'拾序日志-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json');logHandle=await root.getFileHandle(logName,{create:true});await saveLog(logHandle,records);for(const folder of foldersToCreate)await directory([folder],true);for(const p of plan){status(`正在整理：${p.name}`);const dir=await directory(p.parts,true);const record={original:p.sourceParts.concat(p.name).join('/'),destination:p.parts.concat(p.target).join('/'),state:'pending'};records.push(record);await saveLog(logHandle,records);await transfer(p.sourceDir,p.name,dir,p.target,p);history.push({dir,name:p.target,original:p.name,sourceParts:p.sourceParts,record,logHandle,records});record.state='moved';await saveLog(logHandle,records);}const removed=$('cleanup').checked?await removeEmptyDirectories(root,[],records,logHandle):0;status(`整理完成，共移动 ${plan.length} 个文件，删除 ${removed} 个空文件夹。可点击撤销恢复文件及已删除的目录。`);}catch(e){status('整理已停止：'+e.message+'\n已完成的文件可撤销。请参照整理日志检查当前文件。');}finally{previewReady=false;plan=[];foldersToCreate=[];busy=false;render();}};
 $('undo').onclick=async()=>{busy=true;controls();try{while(history.length){const h=history[history.length-1];if(h.kind==='emptyDirectory'){status('正在恢复目录：'+h.sourceParts.join('/'));await directory(h.sourceParts,true);history.pop();h.record.state='restored';await saveLog(h.logHandle,h.records);continue;}status('正在恢复：'+h.original);const sourceDir=await directory(h.sourceParts,true);await transfer(h.dir,h.name,sourceDir,h.original);history.pop();h.record.state='restored';await saveLog(h.logHandle,h.records);}status('已恢复本次页面中整理的文件。空分类文件夹和日志已保留。');}catch(e){status('撤销已停止：'+e.message+'\n不会覆盖原位置的同名文件。');}finally{plan=[];busy=false;render();}};
 window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
+installFileDrop({zone:$('dropZone'),isBusy:()=>busy,message:status,accept:async(dir,paths)=>{
+ if(history.length&&!confirm('添加拖拽项目将清除当前页面的撤销记录，继续？'))return;
+ root=dir;dropScope=paths.some(p=>!p.length)?null:paths;history=[];plan=[];foldersToCreate=[];previewReady=false;selectedCategory='all';page=1;$('search').value='';
+ if(dropScope){$('cleanup').checked=false;$('cleanupHint').textContent='仅整理拖入项目；本次不清理上级目录中的空文件夹。';}
+ $('folder').textContent='已选择：'+root.name+(dropScope?' · 仅处理拖入的 '+paths.length+' 个项目':'');await generatePreview();
+}});
 describeScheme();render();
 if(!window.showDirectoryPicker)status('当前浏览器不支持文件夹读写，请使用 Chrome 或 Edge 打开。');
 </script></html>
